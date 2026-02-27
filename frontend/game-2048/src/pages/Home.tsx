@@ -12,6 +12,7 @@ import { OP20_ABI, type IOP20 } from '../abi/op20Abi';
 
 const MAX_ALLOWANCE = 2n ** 256n - 1n;
 const BET_SESSION_STORAGE_KEY_PREFIX = 'game2048-bet-session-v1';
+const APPROVE_SESSION_STORAGE_KEY_PREFIX = 'game2048-approve-session-v1';
 
 type TxLifecycleStatus = 'pending' | 'reverted' | 'finished';
 
@@ -29,8 +30,20 @@ interface BetRoundState {
     scoreTx: TrackedTx | null;
 }
 
+interface ApproveSessionState {
+    token: GameTokenKind;
+    amount: string;
+    tokenAddress: string;
+    createdAt: number;
+    tx: TrackedTx;
+}
+
 function getBetSessionStorageKey(address: string, contractAddress: string): string {
     return `${BET_SESSION_STORAGE_KEY_PREFIX}:${address}:${contractAddress}`;
+}
+
+function getApproveSessionStorageKey(address: string, contractAddress: string): string {
+    return `${APPROVE_SESSION_STORAGE_KEY_PREFIX}:${address}:${contractAddress}`;
 }
 
 export function Home() {
@@ -64,13 +77,66 @@ export function Home() {
         MOTO: null,
     });
     const [isApproving, setIsApproving] = useState(false);
-    const [approveConfirmWaiting, setApproveConfirmWaiting] = useState<{
-        amount: bigint;
-        token: GameTokenKind;
-        txId: string | null;
-        tokenAddr: Address;
-    } | null>(null);
+    const [approveSession, setApproveSession] = useState<ApproveSessionState | null>(null);
     const approvePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    useEffect(() => {
+        if (!address || !contractAddress) {
+            setApproveSession(null);
+            return;
+        }
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const storageKey = getApproveSessionStorageKey(address, contractAddress);
+        const raw = window.localStorage.getItem(storageKey);
+        if (!raw) {
+            setApproveSession(null);
+            return;
+        }
+        try {
+            const parsed = JSON.parse(raw) as Partial<ApproveSessionState>;
+            if (
+                parsed &&
+                (parsed.token === 'PILL' || parsed.token === 'MOTO') &&
+                typeof parsed.amount === 'string' &&
+                typeof parsed.tokenAddress === 'string' &&
+                typeof parsed.createdAt === 'number' &&
+                parsed.tx &&
+                (parsed.tx.status === 'pending' ||
+                    parsed.tx.status === 'reverted' ||
+                    parsed.tx.status === 'finished')
+            ) {
+                setApproveSession({
+                    token: parsed.token,
+                    amount: parsed.amount,
+                    tokenAddress: parsed.tokenAddress,
+                    createdAt: parsed.createdAt,
+                    tx: {
+                        txId: typeof parsed.tx.txId === 'string' ? parsed.tx.txId : null,
+                        status: parsed.tx.status,
+                    },
+                });
+            } else {
+                setApproveSession(null);
+            }
+        } catch {
+            setApproveSession(null);
+        }
+    }, [address, contractAddress]);
+
+    useEffect(() => {
+        if (!address || !contractAddress || typeof window === 'undefined') {
+            return;
+        }
+        const storageKey = getApproveSessionStorageKey(address, contractAddress);
+        if (approveSession) {
+            window.localStorage.setItem(storageKey, JSON.stringify(approveSession));
+        } else {
+            window.localStorage.removeItem(storageKey);
+        }
+    }, [address, approveSession, contractAddress]);
 
     useEffect(() => {
         const hydrateRoundState = async () => {
@@ -283,13 +349,19 @@ export function Home() {
     }, [allowance.PILL, pillDepositBaseUnits]);
 
     const isWaitingApproveConfirmForSelectedToken =
-        approveConfirmWaiting !== null && approveConfirmWaiting.token === selectedToken;
+        approveSession !== null &&
+        approveSession.tx.status === 'pending' &&
+        approveSession.token === selectedToken;
 
     const isWaitingApproveConfirmForMoto =
-        approveConfirmWaiting !== null && approveConfirmWaiting.token === 'MOTO';
+        approveSession !== null &&
+        approveSession.tx.status === 'pending' &&
+        approveSession.token === 'MOTO';
 
     const isWaitingApproveConfirmForPill =
-        approveConfirmWaiting !== null && approveConfirmWaiting.token === 'PILL';
+        approveSession !== null &&
+        approveSession.tx.status === 'pending' &&
+        approveSession.token === 'PILL';
 
     const refreshAllowance = useCallback(async () => {
         if (!provider || !addressObject || !contractAddress) {
@@ -748,9 +820,28 @@ export function Home() {
                 receipt && typeof receipt === 'object' && 'transactionId' in receipt
                     ? ((receipt as { transactionId?: string }).transactionId ?? null)
                     : null;
-            setApproveConfirmWaiting({ amount: amountToApprove, token: kind, txId, tokenAddr });
+            setApproveSession({
+                token: kind,
+                amount: amountToApprove.toString(),
+                tokenAddress: tokenAddr.toString(),
+                createdAt: Date.now(),
+                tx: {
+                    txId,
+                    status: txId ? 'pending' : 'finished',
+                },
+            });
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            setApproveSession({
+                token: kind,
+                amount: amountToApprove.toString(),
+                tokenAddress: tokenAddr.toString(),
+                createdAt: Date.now(),
+                tx: {
+                    txId: null,
+                    status: 'reverted',
+                },
+            });
             setOwnerActionError(message);
         } finally {
             setIsApproving(false);
@@ -854,14 +945,20 @@ export function Home() {
     }, [cancelTx, provider, refreshStats, refreshTokens]);
 
     useEffect(() => {
-        const pending = approveConfirmWaiting;
-        if (!pending || !provider || !addressObject || !contractAddress) {
+        const pending = approveSession;
+        if (
+            !pending ||
+            pending.tx.status !== 'pending' ||
+            !provider ||
+            !addressObject ||
+            !contractAddress
+        ) {
             return;
         }
 
         const spender = Address.fromString(contractAddress);
         const tokenContract = getContract<IOP20>(
-            pending.tokenAddr,
+            Address.fromString(pending.tokenAddress),
             OP20_ABI,
             provider,
             network,
@@ -877,18 +974,41 @@ export function Home() {
                     clearInterval(approvePollRef.current);
                     approvePollRef.current = null;
                 }
-                setApproveConfirmWaiting(null);
+                setApproveSession((prev) => {
+                    if (!prev || prev.tx.status !== 'pending') {
+                        return prev;
+                    }
+                    return {
+                        ...prev,
+                        tx: {
+                            ...prev.tx,
+                            status: 'reverted',
+                        },
+                    };
+                });
                 return;
             }
             try {
                 const res = await tokenContract.allowance(addressObject, spender);
                 const remaining = res.properties.remaining;
-                if (remaining >= pending.amount) {
+                const targetAmount = BigInt(pending.amount);
+                if (remaining >= targetAmount) {
                     if (approvePollRef.current) {
                         clearInterval(approvePollRef.current);
                         approvePollRef.current = null;
                     }
-                    setApproveConfirmWaiting(null);
+                    setApproveSession((prev) => {
+                        if (!prev) {
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            tx: {
+                                ...prev.tx,
+                                status: 'finished',
+                            },
+                        };
+                    });
                     setAllowance((prev) => ({
                         ...prev,
                         [pending.token]: remaining,
@@ -907,7 +1027,7 @@ export function Home() {
                 approvePollRef.current = null;
             }
         };
-    }, [approveConfirmWaiting, provider, addressObject, contractAddress, network]);
+    }, [approveSession, provider, addressObject, contractAddress, network]);
 
     const hasOrphanActiveBet = activeBet !== null && betRound === null;
 
@@ -962,6 +1082,14 @@ export function Home() {
                         isApproving={isApproving}
                         isWaitingApproval={isWaitingApproveConfirmForSelectedToken}
                         onApprove={() => handleApprove(selectedToken)}
+                        approveTxId={
+                            approveSession?.token === selectedToken ? approveSession.tx.txId : null
+                        }
+                        approveTxStatus={
+                            approveSession?.token === selectedToken
+                                ? approveSession.tx.status
+                                : null
+                        }
                         betTxId={betRound?.betTx.txId ?? null}
                         betTxStatus={betRound?.betTx.status ?? null}
                         scoreTxId={betRound?.scoreTx?.txId ?? null}

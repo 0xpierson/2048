@@ -16,6 +16,8 @@ interface BetPanelProps {
     isApproving: boolean;
     isWaitingApproval: boolean;
     onApprove: () => void;
+    approveTxId?: string | null;
+    approveTxStatus?: 'pending' | 'reverted' | 'finished' | null;
     betTxId?: string | null;
     betTxStatus?: 'pending' | 'reverted' | 'finished' | null;
     scoreTxId?: string | null;
@@ -60,6 +62,8 @@ export function BetPanel({
     isApproving,
     isWaitingApproval,
     onApprove,
+    approveTxId,
+    approveTxStatus,
     betTxId,
     betTxStatus,
     scoreTxId,
@@ -80,6 +84,9 @@ export function BetPanel({
 
     const tokenInfo = tokens[selectedToken];
 
+    const approveTxUrl = approveTxId
+        ? `https://opscan.org/transactions/${approveTxId}?network=op_testnet`
+        : null;
     const betTxUrl = betTxId
         ? `https://opscan.org/transactions/${betTxId}?network=op_testnet`
         : null;
@@ -89,6 +96,8 @@ export function BetPanel({
     const cancelTxUrl = cancelTxId
         ? `https://opscan.org/transactions/${cancelTxId}?network=op_testnet`
         : null;
+
+    const hasApproveTx = approveTxStatus === 'pending' || approveTxStatus === 'finished';
 
     return (
         <section className="bet-panel">
@@ -145,12 +154,21 @@ export function BetPanel({
 
             {needsApproval && (
                 <div className="bet-approval-panel">
-                    <p className="helper">
-                        Approve the Game2048 contract to use your {tokenInfo.symbol}.
-                    </p>
+                    {!isWaitingApproval && (
+                        <p className="helper">
+                            Approve the Game2048 contract to use your {tokenInfo.symbol}.
+                        </p>
+                    )}
                     {isWaitingApproval ? (
                         <p className="helper approve-waiting">
-                            Approval submitted. Waiting for confirmation (usually 1–2 min).
+                            Approval submitted. Do not reload this page. Waiting for confirmation
+                            (usually 1-2 min). The "Start bet game" button will enable
+                            automatically when this tx is confirmed.
+                        </p>
+                    ) : hasApproveTx ? (
+                        <p className="helper approve-waiting">
+                            Approval tx already submitted. You do not need to approve again right
+                            now.
                         </p>
                     ) : (
                         <button
@@ -170,6 +188,7 @@ export function BetPanel({
             {error && <p className="error">{error}</p>}
 
             {(statusMessage ||
+                approveTxStatus ||
                 betTxStatus ||
                 scoreTxStatus ||
                 cancelTxStatus ||
@@ -177,6 +196,23 @@ export function BetPanel({
                 (savedScore !== null && savedScore !== undefined)) && (
                 <div className="bet-approval-panel tx-status-panel">
                     {statusMessage && <p className="helper tx-status-message">{statusMessage}</p>}
+                    {approveTxStatus && (
+                        <p className="helper tx-meta-row">
+                            Approve tx:{' '}
+                            {approveTxId
+                                ? `${approveTxId.slice(0, 8)}...${approveTxId.slice(-8)}`
+                                : 'unknown'}{' '}
+                            ({approveTxStatus})
+                            {approveTxUrl && (
+                                <>
+                                    {' '}
+                                    <a href={approveTxUrl} target="_blank" rel="noreferrer">
+                                        View on OP_SCAN
+                                    </a>
+                                </>
+                            )}
+                        </p>
+                    )}
                     {betTxStatus && (
                         <p className="helper tx-meta-row">
                             Bet tx:{' '}
