@@ -1,0 +1,25 @@
+{
+  "name": "game-2048-contract",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OPNet AssemblyScript smart contract that tracks high scores for the 2048 game.",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "eslint . --fix",
+    "build": "asc src/index.ts --config asconfig.json --target release"
+  },
+  "dependencies": {
+    "@assemblyscript/loader": "latest",
+    "@btc-vision/as-bignum": "latest",
+    "@btc-vision/assemblyscript": "^0.29.2",
+    "@btc-vision/btc-runtime": "rc",
+    "@btc-vision/opnet-transform": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.0",
+    "typescript-eslint": "^8.56.0",
+    "prettier": "^3.3.3"
+  }
+}
+

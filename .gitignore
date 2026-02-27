@@ -1,0 +1,46 @@
+# OS
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Dependency directories
+node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local runtime/cache files
+.cache/
+.turbo/
+.vercel/
+tmp/
+temp/
+
+# OPNet / contract artifacts (common)
+artifacts/
+cache/
+wasm/
