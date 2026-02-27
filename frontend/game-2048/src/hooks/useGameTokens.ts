@@ -47,7 +47,7 @@ export function useGameTokens(): UseGameTokensResult {
     const [error, setError] = useState<Error | null>(null);
 
     const refresh = useCallback(async () => {
-        if (!contract || !provider || !addressObject) {
+        if (!contract || !provider) {
             setTokens(DEFAULT_TOKEN_STATE);
             return;
         }
@@ -64,26 +64,27 @@ export function useGameTokens(): UseGameTokensResult {
             const motoToken = motoTokenRes.properties.token;
             const pillToken = pillTokenRes.properties.token;
 
+            const sender = addressObject ?? undefined;
             const motoContract: IOP20 = getContract<IOP20>(
                 motoToken,
                 OP20_ABI,
                 provider,
                 network,
-                addressObject,
+                sender,
             );
             const pillContract: IOP20 = getContract<IOP20>(
                 pillToken,
                 OP20_ABI,
                 provider,
                 network,
-                addressObject,
+                sender,
             );
 
             const [motoMetadata, pillMetadata, motoBalance, pillBalance] = await Promise.all([
                 motoContract.metadata(),
                 pillContract.metadata(),
-                motoContract.balanceOf(addressObject),
-                pillContract.balanceOf(addressObject),
+                addressObject ? motoContract.balanceOf(addressObject) : Promise.resolve(null),
+                addressObject ? pillContract.balanceOf(addressObject) : Promise.resolve(null),
             ]);
 
             setTokens({
@@ -91,13 +92,13 @@ export function useGameTokens(): UseGameTokensResult {
                     address: pillToken,
                     symbol: pillMetadata.properties.symbol,
                     decimals: pillMetadata.properties.decimals,
-                    balance: pillBalance.properties.balance,
+                    balance: pillBalance?.properties.balance ?? null,
                 },
                 MOTO: {
                     address: motoToken,
                     symbol: motoMetadata.properties.symbol,
                     decimals: motoMetadata.properties.decimals,
-                    balance: motoBalance.properties.balance,
+                    balance: motoBalance?.properties.balance ?? null,
                 },
             });
         } catch (err) {
@@ -110,7 +111,7 @@ export function useGameTokens(): UseGameTokensResult {
     }, [addressObject, contract, network, provider]);
 
     useEffect(() => {
-        if (!contract || !provider || !addressObject) {
+        if (!contract || !provider) {
             setTokens(DEFAULT_TOKEN_STATE);
             return;
         }

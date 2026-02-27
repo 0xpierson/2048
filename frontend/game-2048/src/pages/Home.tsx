@@ -46,6 +46,8 @@ export function Home() {
     const [betError, setBetError] = useState<string | null>(null);
     const [betStatus, setBetStatus] = useState<string | null>(null);
     const [betRound, setBetRound] = useState<BetRoundState | null>(null);
+    const [cancelTx, setCancelTx] = useState<TrackedTx | null>(null);
+    const [isCancellingBet, setIsCancellingBet] = useState(false);
     const [isStartingBet, setIsStartingBet] = useState(false);
     const [activeBet, setActiveBet] = useState<{ token: GameTokenKind; stake: bigint } | null>(
         null,
@@ -76,6 +78,7 @@ export function Home() {
                 setActiveBet(null);
                 setBetStatus(null);
                 setBetRound(null);
+                setCancelTx(null);
                 return;
             }
 
@@ -172,13 +175,14 @@ export function Home() {
                     if (token) {
                         setActiveBet({ token, stake: stakeAmount });
                         setBetStatus(
-                            'Active bet found on-chain from a previous session. Submit score when your game finishes.',
+                            'Active bet found on-chain from a previous session. Cancel this bet first, then start a new game.',
                         );
                     }
                 } else if (!hasOnChainActive && !localRound) {
                     setActiveBet(null);
                     setBetRound(null);
                     setBetStatus(null);
+                    setCancelTx(null);
                 }
             } catch {
                 // ignore sync errors
@@ -462,6 +466,80 @@ export function Home() {
         }
     };
 
+    const submitScore = async (round: BetRoundState, autoTriggered: boolean) => {
+        if (!contract || !address || !isConnected) {
+            setBetError('Connect wallet before submitting score.');
+            return;
+        }
+        if (round.finalScore === null) {
+            setBetError('No saved score to submit.');
+            return;
+        }
+        if (round.betTx.status !== 'finished') {
+            setBetError('Bet tx is not confirmed yet. Please wait.');
+            return;
+        }
+        if (round.scoreTx?.status === 'pending') {
+            return;
+        }
+
+        setBetError(null);
+        try {
+            const simulation = await contract.submitBetScore(BigInt(round.finalScore));
+            if (simulation.revert) {
+                const revertMessage =
+                    typeof simulation.revert === 'string'
+                        ? simulation.revert
+                        : JSON.stringify(simulation.revert);
+                throw new Error(revertMessage);
+            }
+            const receipt = await simulation.sendTransaction({
+                network,
+                refundTo: address,
+                signer: null,
+                mldsaSigner: null,
+                maximumAllowedSatToSpend: 100000n,
+            });
+            const txId =
+                receipt && typeof receipt === 'object' && 'transactionId' in receipt
+                    ? ((receipt as { transactionId?: string }).transactionId ?? null)
+                    : null;
+            const updatedRound: BetRoundState = {
+                ...round,
+                scoreTx: {
+                    txId,
+                    status: txId ? 'pending' : 'finished',
+                },
+            };
+            persistRound(updatedRound);
+            if (!txId) {
+                persistRound(null);
+                setActiveBet(null);
+                setBetStatus(null);
+                await Promise.all([refreshTokens(), refreshStats()]);
+                return;
+            }
+            setBetStatus(
+                'Score tx submitted. Waiting for confirmation. You can start the next round after this tx is confirmed.',
+            );
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            setBetError(`Failed to submit score on-chain: ${message}`);
+            if (autoTriggered) {
+                setBetStatus(
+                    'Game finished but auto-submit failed. Please click "Submit score on-chain" to try again.',
+                );
+            }
+            persistRound({
+                ...round,
+                scoreTx: {
+                    txId: null,
+                    status: 'reverted',
+                },
+            });
+        }
+    };
+
     const handleGameOver = async (finalScore: number) => {
         if (finalScore <= 0 || !activeBet) {
             return;
@@ -485,29 +563,26 @@ export function Home() {
             return;
         }
 
-        setBetStatus('Game finished. Bet confirmed. You can now submit your score on-chain.');
+        setBetStatus('Game finished. Bet confirmed. Opening wallet to submit score...');
+        await submitScore(nextRound, true);
     };
 
-    const handleSubmitScore = async () => {
+    const handleCancelActiveBet = async () => {
         if (!contract || !address || !isConnected) {
-            setBetError('Connect wallet before submitting score.');
+            setBetError('Connect wallet before cancelling bet.');
             return;
         }
-        if (!betRound || betRound.finalScore === null) {
-            setBetError('No saved score to submit.');
+        if (!activeBet || betRound !== null) {
             return;
         }
-        if (betRound.betTx.status !== 'finished') {
-            setBetError('Bet tx is not confirmed yet. Please wait.');
-            return;
-        }
-        if (betRound.scoreTx?.status === 'pending') {
+        if (cancelTx?.status === 'pending') {
             return;
         }
 
+        setIsCancellingBet(true);
         setBetError(null);
         try {
-            const simulation = await contract.submitBetScore(BigInt(betRound.finalScore));
+            const simulation = await contract.cancelBetGame();
             if (simulation.revert) {
                 const revertMessage =
                     typeof simulation.revert === 'string'
@@ -526,35 +601,38 @@ export function Home() {
                 receipt && typeof receipt === 'object' && 'transactionId' in receipt
                     ? ((receipt as { transactionId?: string }).transactionId ?? null)
                     : null;
-            const updatedRound: BetRoundState = {
-                ...betRound,
-                scoreTx: {
-                    txId,
-                    status: txId ? 'pending' : 'finished',
-                },
-            };
-            persistRound(updatedRound);
             if (!txId) {
-                persistRound(null);
+                setCancelTx(null);
                 setActiveBet(null);
                 setBetStatus(null);
                 await Promise.all([refreshTokens(), refreshStats()]);
                 return;
             }
+            setCancelTx({
+                txId,
+                status: 'pending',
+            });
             setBetStatus(
-                'Score tx submitted. Waiting for confirmation. You can start the next round after this tx is confirmed.',
+                'Cancel tx submitted. Waiting for confirmation. You can start a new round after this tx is confirmed.',
             );
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            setBetError(`Failed to submit score on-chain: ${message}`);
-            persistRound({
-                ...betRound,
-                scoreTx: {
-                    txId: null,
-                    status: 'reverted',
-                },
+            setCancelTx({
+                txId: null,
+                status: 'reverted',
             });
+            setBetError(`Failed to cancel active bet: ${message}`);
+        } finally {
+            setIsCancellingBet(false);
         }
+    };
+
+    const handleSubmitScore = async () => {
+        if (!betRound) {
+            setBetError('No saved score to submit.');
+            return;
+        }
+        await submitScore(betRound, false);
     };
 
     const handleOwnerDeposit = async (kind: GameTokenKind) => {
@@ -747,6 +825,35 @@ export function Home() {
     }, [betRound, persistRound, provider, refreshStats, refreshTokens]);
 
     useEffect(() => {
+        if (!provider || !cancelTx?.txId || cancelTx.status !== 'pending') {
+            return;
+        }
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const receipt = await provider.getTransactionReceipt(cancelTx.txId as string);
+                if (!receipt || cancelled) {
+                    return;
+                }
+                setCancelTx(null);
+                setActiveBet(null);
+                setBetStatus(null);
+                await Promise.all([refreshTokens(), refreshStats()]);
+            } catch {
+                // keep polling while pending
+            }
+        };
+        void poll();
+        const intervalId = window.setInterval(() => {
+            void poll();
+        }, 15000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(intervalId);
+        };
+    }, [cancelTx, provider, refreshStats, refreshTokens]);
+
+    useEffect(() => {
         const pending = approveConfirmWaiting;
         if (!pending || !provider || !addressObject || !contractAddress) {
             return;
@@ -802,10 +909,14 @@ export function Home() {
         };
     }, [approveConfirmWaiting, provider, addressObject, contractAddress, network]);
 
+    const hasOrphanActiveBet = activeBet !== null && betRound === null;
+
     const canPlayGame =
         activeBet !== null &&
+        !hasOrphanActiveBet &&
         (betRound?.finalScore ?? null) === null &&
-        (betRound?.scoreTx?.status ?? null) !== 'pending';
+        (betRound?.scoreTx?.status ?? null) !== 'pending' &&
+        (cancelTx?.status ?? null) !== 'pending';
 
     const canSubmitScore =
         betRound !== null &&
@@ -855,10 +966,15 @@ export function Home() {
                         betTxStatus={betRound?.betTx.status ?? null}
                         scoreTxId={betRound?.scoreTx?.txId ?? null}
                         scoreTxStatus={betRound?.scoreTx?.status ?? null}
+                        cancelTxId={cancelTx?.txId ?? null}
+                        cancelTxStatus={cancelTx?.status ?? null}
                         savedScore={betRound?.finalScore ?? null}
                         canSubmitScore={canSubmitScore}
                         isSubmittingScore={isSubmittingScore}
                         onSubmitScore={canSubmitScore ? handleSubmitScore : undefined}
+                        canCancelActiveBet={hasOrphanActiveBet}
+                        isCancellingBet={isCancellingBet || cancelTx?.status === 'pending'}
+                        onCancelActiveBet={hasOrphanActiveBet ? handleCancelActiveBet : undefined}
                     />
                     {isOwner && (
                         <section className="owner-panel">

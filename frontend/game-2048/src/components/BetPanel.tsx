@@ -20,10 +20,15 @@ interface BetPanelProps {
     betTxStatus?: 'pending' | 'reverted' | 'finished' | null;
     scoreTxId?: string | null;
     scoreTxStatus?: 'pending' | 'reverted' | 'finished' | null;
+    cancelTxId?: string | null;
+    cancelTxStatus?: 'pending' | 'reverted' | 'finished' | null;
     savedScore?: number | null;
     canSubmitScore?: boolean;
     isSubmittingScore?: boolean;
     onSubmitScore?: (() => void | Promise<void>) | undefined;
+    canCancelActiveBet?: boolean;
+    isCancellingBet?: boolean;
+    onCancelActiveBet?: (() => void | Promise<void>) | undefined;
 }
 
 function formatTokenBalance(balance: bigint, decimals: number, symbol: string): string {
@@ -59,10 +64,15 @@ export function BetPanel({
     betTxStatus,
     scoreTxId,
     scoreTxStatus,
+    cancelTxId,
+    cancelTxStatus,
     savedScore,
     canSubmitScore,
     isSubmittingScore,
     onSubmitScore,
+    canCancelActiveBet,
+    isCancellingBet,
+    onCancelActiveBet,
 }: BetPanelProps) {
     const handleStakeChange = (event: ChangeEvent<HTMLInputElement>) => {
         onStakeInputChange(event.target.value);
@@ -75,6 +85,9 @@ export function BetPanel({
         : null;
     const scoreTxUrl = scoreTxId
         ? `https://opscan.org/transactions/${scoreTxId}?network=op_testnet`
+        : null;
+    const cancelTxUrl = cancelTxId
+        ? `https://opscan.org/transactions/${cancelTxId}?network=op_testnet`
         : null;
 
     return (
@@ -159,6 +172,8 @@ export function BetPanel({
             {(statusMessage ||
                 betTxStatus ||
                 scoreTxStatus ||
+                cancelTxStatus ||
+                canCancelActiveBet ||
                 (savedScore !== null && savedScore !== undefined)) && (
                 <div className="bet-approval-panel tx-status-panel">
                     {statusMessage && <p className="helper tx-status-message">{statusMessage}</p>}
@@ -196,6 +211,41 @@ export function BetPanel({
                                 </>
                             )}
                         </p>
+                    )}
+                    {cancelTxStatus && (
+                        <p className="helper tx-meta-row">
+                            Cancel tx:{' '}
+                            {cancelTxId
+                                ? `${cancelTxId.slice(0, 8)}...${cancelTxId.slice(-8)}`
+                                : 'unknown'}{' '}
+                            ({cancelTxStatus})
+                            {cancelTxUrl && (
+                                <>
+                                    {' '}
+                                    <a href={cancelTxUrl} target="_blank" rel="noreferrer">
+                                        View on OP_SCAN
+                                    </a>
+                                </>
+                            )}
+                        </p>
+                    )}
+                    {onCancelActiveBet &&
+                        canCancelActiveBet &&
+                        cancelTxStatus !== 'pending' && (
+                        <>
+                            <p className="helper">
+                                Cancel this bet first,
+                                wait for confirmation, then start a new round.
+                            </p>
+                            <button
+                                type="button"
+                                className="btn btn-submit-score"
+                                onClick={onCancelActiveBet}
+                                disabled={isCancellingBet}
+                            >
+                                {isCancellingBet ? 'Cancelling bet...' : 'Cancel active bet'}
+                            </button>
+                        </>
                     )}
                     {onSubmitScore && canSubmitScore && (
                         <>
